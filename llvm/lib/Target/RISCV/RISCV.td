@@ -154,6 +154,13 @@ def FeatureStdExtV
 def HasStdExtV : Predicate<"Subtarget->hasStdExtV()">,
                            AssemblerPredicate<(all_of FeatureStdExtV),
                            "'V' (Vector Instructions)">;
+                           
+def FeatureExtSPM 
+   : SubtargetFeature<"spm", "HasExtSPM", "true",
+                        "'SPM' (SPM Instructions Extension)">;
+def HasExtSPM : Predicate<"Subtarget->hasExtSPM()">, 
+                           AssemblerPredicate<(all_of FeatureExtSPM),
+                           "'SPM' (SPM Instructions Extension)">;
 
 def Feature64Bit
     : SubtargetFeature<"64bit", "HasRV64", "true", "Implements RV64">;

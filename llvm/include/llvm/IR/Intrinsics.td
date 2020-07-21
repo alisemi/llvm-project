@@ -1531,6 +1531,13 @@ def int_preserve_struct_access_index : Intrinsic<[llvm_anyptr_ty],
 //===---------- Intrinsics to query properties of scalable vectors --------===//
 def int_vscale : Intrinsic<[llvm_anyint_ty], [], [IntrNoMem]>;
 
+
+//===---------- Intrinsics for SPM instructions --------===//
+def int_memspm : Intrinsic<[], [llvm_anyptr_ty, llvm_i32_ty], []>;
+def int_spmreg : Intrinsic<[llvm_i32_ty], [llvm_anyptr_ty, llvm_i32_ty], []>;
+def int_spmdel : Intrinsic<[], [llvm_anyptr_ty, llvm_i32_ty], []>;
+
+
 //===----------------------------------------------------------------------===//
 
 //===----------------------------------------------------------------------===//
