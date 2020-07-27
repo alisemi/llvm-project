@@ -9,10 +9,13 @@
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
 #include "llvm/IR/Intrinsics.h"
+#include <llvm/Analysis/LoopInfo.h>
+#include "llvm/Analysis/ScalarEvolution.h"
 #include <stack>
 #include <vector>
 #include <algorithm>
 #include <string>
+#include <map>
 
 using namespace llvm;
 
@@ -21,6 +24,64 @@ struct SkeletonPass: public ModulePass {
 	static char ID;
 	SkeletonPass() :
 			ModulePass(ID) {
+	}
+
+	struct SpmInfo {
+		std::stack<Instruction*> loadStack; //Loads to be replaced with spmreg
+		BasicBlock *memspmLocation; //Basic Blocks to insert memspm instructions
+		std::set<Value*> neededArrays;
+	};
+
+	//Returns itself it is already a top-level loop
+	Loop* outermostParentLoop(Loop *L) {
+		Loop *parent_loop = L->getParentLoop();
+		if (parent_loop) {
+			return outermostParentLoop(parent_loop);
+		} else {
+			return L;
+		}
+	}
+
+	void countBlocksInLoop(Loop *L, unsigned nesAng) {
+		unsigned numBlocks = 0;
+		Loop::block_iterator bb;
+
+		for (bb = L->block_begin(); bb != L->block_end(); ++bb) {
+			numBlocks++;
+		}
+		errs() << "Loop level " << nesAng << " has " << numBlocks
+				<< " blocks\n";
+
+		BasicBlock *predecessor = L->getLoopPredecessor();
+		errs() << "Loop predecessor block is " << predecessor->getName()
+				<< "\n";
+
+		SmallVector<std::pair<BasicBlock*, BasicBlock*>, 8> ExitEdges;
+		L->getExitEdges(ExitEdges);
+		if (ExitEdges.size() == 1) {
+			errs() << "it has only one exit edge\n";
+		}
+		BasicBlock *from_block = ExitEdges[0].first;
+		BasicBlock *to_block = ExitEdges[0].second;
+		errs() << "Exit Edge from " << from_block->getName() << " to "
+				<< to_block->getName() << "\n";
+
+		errs() << "Loop depth : " << L->getLoopDepth() << "\n";
+		Loop *parent_loop = L->getParentLoop();
+		if (parent_loop) {
+			errs() << "Parent loop is : " << parent_loop->getName() << "\n";
+		} else {
+			errs() << "This is a top level loop\n";
+		}
+		errs() << "Top level parent loop is "
+				<< outermostParentLoop(L)->getName() << "\n";
+		errs() << "\n";
+
+		std::vector<Loop*> subLoops = L->getSubLoops();
+		Loop::iterator j, f;
+		for (j = subLoops.begin(), f = subLoops.end(); j != f; ++j) {
+			countBlocksInLoop(*j, nesAng + 1);
+		}
 	}
 
 	virtual bool runOnModule(Module &M) {
@@ -46,6 +107,7 @@ struct SkeletonPass: public ModulePass {
 		std::vector<Value*> pre_annotated_vars;
 //		std::vector<Value*> alloca_vars;
 		std::vector<Value*> true_annotated_vars;
+		std::map<Value*, Value*> true_annotated_geps;
 		for (Function &fn : M) {
 			for (BasicBlock &bb : fn) {
 				for (Instruction &inst : bb) {
@@ -156,77 +218,239 @@ struct SkeletonPass: public ModulePass {
 				}
 			}
 		}
-		errs() << "True annotated variables: \n";
+		errs() << "True annotated variables:\n";
 		for (auto const &i : true_annotated_vars) {
 			errs() << i->getName() << "\n";
 		}
 
-		//Annotations
-		auto global_annos = M.getNamedGlobal("llvm.global.annotations");
-		if (global_annos) {
-			auto a = cast<ConstantArray>(global_annos->getOperand(0));
-			errs() << "a->getNumOperands() = " << a->getNumOperands() << "\n";
-			for (int i = 0; i < a->getNumOperands(); i++) {
-				auto e = cast<ConstantStruct>(a->getOperand(i));
-				errs() << "e->NumUserOperands = " << e->getNumOperands()
-						<< "\n";
-				auto anno =
-						cast<ConstantDataArray>(
-								cast<GlobalVariable>(
-										e->getOperand(1)->getOperand(0))->getOperand(
-										0))->getAsCString();
-				errs() << "anno = " << anno << "\n";
-				Value *anno_operand = e->getOperand(0)->getOperand(0);
-				errs() << "anno_operand(0)->getName() = "
-						<< anno_operand->getName() << "\n";
-
-				if (auto fn = dyn_cast<Function>(
-						e->getOperand(0)->getOperand(0))) {
-					auto anno =
-							cast<ConstantDataArray>(
-									cast<GlobalVariable>(
-											e->getOperand(1)->getOperand(0))->getOperand(
-											0))->getAsCString();
-					fn->addFnAttr(anno); // <-- add function annotation here
+		//Get GEPS for annotated variables
+		for (Function &fn : M) {
+			for (BasicBlock &bb : fn) {
+				for (Instruction &inst : bb) {
+					if (GetElementPtrInst *getElementPtrInst = dyn_cast<
+							GetElementPtrInst>(&inst)) {
+						Value *ptrOperand =
+								getElementPtrInst->getPointerOperand();
+						errs() << "Ptr operand is " << ptrOperand->getName()
+								<< "\n";
+						std::vector<Value*>::iterator it;
+						it = std::find(true_annotated_vars.begin(),
+								true_annotated_vars.end(), ptrOperand);
+						if (it != true_annotated_vars.end()) {
+							errs() << "Found at " << *it << "\n";
+							true_annotated_geps.insert(
+									std::pair<Value*, Value*>(getElementPtrInst,
+											ptrOperand));
+						} else {
+							errs() << "GEP Not found\n";
+						}
+					}
 				}
 			}
 		}
 
-		for (auto &global_var : M.getGlobalList()) {
-			errs() << "global_var.getName() = " << global_var.getName()
-					<< " \n";
-			errs() << "global_var.getValueName()->getValue() = "
-					<< global_var.getValueName()->getValue() << "\n";
-			errs() << "global_var.getValueName() = "
-					<< global_var.getValueName() << "\n";
-		}
-
-		auto global_vars = M.getNamedGlobal("");
-		if (global_vars) {
-			auto a = cast<ConstantArray>(global_vars->getOperand(0));
-			for (int i = 0; i < a->getNumOperands(); i++) {
-				auto e = cast<ConstantStruct>(a->getOperand(i));
-				errs() << "e->NumUserOperands = " << e->getName() << "\n";
-			}
-		} else {
-			errs() << "That's not working...\n";
-		}
-
+		//Loops
+		std::vector<SpmInfo> spmInfoList;
 		for (Function &fn : M) {
-			errs() << "I saw a function called " << fn.getName() << "!\n";
-			if (fn.hasFnAttribute("ali")) {
-				errs() << fn.getName() << " has my attribute!\n";
+			//LoopInfo gives error for declaration-only functions
+			if (fn.isDeclaration()) {
+				continue;
+			}
+			int loopCounter = 0;
+			LoopInfo &LI = getAnalysis<LoopInfoWrapperPass>(fn).getLoopInfo();
+			//TODO will use ScalarEvolution for smart spm instruction injections
+			ScalarEvolution &se =
+					getAnalysis<ScalarEvolutionWrapperPass>(fn).getSE();
+
+			//We only need to traverse on top level loops
+			int loopNo = 0;
+			for (LoopInfo::iterator i = LI.begin(), e = LI.end(); i != e; ++i) {
+				Loop *L = *i;
+				int bbCounter = 0;
+				bool needMemspm = false;
+				loopCounter++;
+				errs() << "Loop ";
+				errs() << loopCounter;
+				errs() << ": Blocks = \n";
+				spmInfoList.push_back(SpmInfo());
+
+				for (Loop::block_iterator bb = L->block_begin();
+						bb != L->block_end(); ++bb) {
+					BasicBlock *cur_block = *bb;
+//					errs() << cur_block->getName() << "\n";
+					bbCounter += 1;
+					for (Instruction &inst : *cur_block) {
+						if (LoadInst *load_inst = dyn_cast<LoadInst>(&inst)) {
+							Value *addr = load_inst->getPointerOperand();
+							errs() << "Pointer operand is " << addr->getName()
+									<< "\n";
+							std::map<Value*, Value*>::iterator it;
+							it = true_annotated_geps.find(addr);
+							if (it != true_annotated_geps.end()) {
+								errs() << "Found at pairs";
+								needMemspm = true;
+								spmInfoList[loopNo].loadStack.push(load_inst);
+								spmInfoList[loopNo].neededArrays.insert(
+										it->second);
+								//loadStack.push(load_inst);
+							} else {
+								errs() << "Not found\n";
+							}
+						}
+					}
+				}
+
+				if (needMemspm) {
+					BasicBlock *predecessor = L->getLoopPredecessor();
+					spmInfoList[loopNo].memspmLocation = predecessor;
+					//memspmStack.push(predecessor);
+				}
+				needMemspm = false;
+				loopNo++;
+
+				errs() << "Loop ";
+				errs() << loopCounter;
+				errs() << ": #BBs = ";
+				errs() << bbCounter;
+				errs() << "\n";
+
+				//countBlocksInLoop(*i, 0);
 			}
 		}
+
+		int spmInfoCount = 0;
+		llvm::Type *i32_type = llvm::IntegerType::getInt32Ty(M.getContext());
+		Type *i32_ptr_type = PointerType::getInt32PtrTy(M.getContext());
+		for (SpmInfo i : spmInfoList) {
+			errs() << "Spm info no : " << spmInfoCount++ << "\n";
+			errs() << "LoadStack: \n";
+			while (!i.loadStack.empty()) {
+				LoadInst *I = cast<LoadInst>(i.loadStack.top());
+				errs() << *I << "\n";
+				BasicBlock::iterator ii(I);
+				std::string Result;
+				Result = "I->getPointerOperand() ";
+				raw_string_ostream OS(Result);
+				I->getPointerOperand()->getType()->print(OS, false, false);
+				errs() << OS.str() << "\n";
+
+				Value *spm_args[] = { I->getPointerOperand(), ConstantInt::get(
+						i32_type, 0/*value*/, true) };
+				CallInst *call_inst = CallInst::Create(spmreg_intrinsic,
+						spm_args);
+				ReplaceInstWithInst(I->getParent()->getInstList(), ii,
+						call_inst);
+
+				modified = true;
+				i.loadStack.pop();
+			}
+			errs() << "memspm Locations Stack: \n";
+			BasicBlock *BB = i.memspmLocation;
+			if (BB) {
+				errs() << "needed arrays: \n";
+				std::set<Value*>::iterator it;
+				for (it = i.neededArrays.begin(); it != i.neededArrays.end();
+						++it) {
+					Value *array_ptr = *it;
+					errs() << array_ptr->getName() << "\n";
+					std::string Result;
+					Result = "Value has type ";
+					raw_string_ostream OS(Result);
+					array_ptr->getType()->print(OS, false, false);
+					errs() << OS.str() << "\n";
+					bool canBeNull = false;
+					unsigned long int offsetBytes =
+							array_ptr->getPointerDereferenceableBytes(
+									M.getDataLayout(), canBeNull);
+
+					errs() << BB->getName() << "\n";
+
+					IRBuilder<> Builder(BB);
+					Instruction *branch_inst = BB->getTerminator();
+					errs() << "TERMINATOR INST " << *branch_inst << "\n";
+
+					Builder.SetInsertPoint(branch_inst);
+					Value *InterValue = Builder.CreateAdd(
+							ConstantInt::get(i32_type, offsetBytes/*value*/,
+									true),
+							ConstantInt::get(i32_type, 976/*value*/, true));
+					Value *NewValue = Builder.CreateAdd(InterValue,
+							ConstantInt::get(i32_type, 4531/*value*/, true));
+
+//					Value *i32ptr = Builder.CreateConstInBoundsGEP1_32(
+//							array_ptr->getType(), array_ptr, 0);
+					Value *indexList[2] = { ConstantInt::get(i32_type,
+							0/*value*/, true), ConstantInt::get(i32_type,
+							0/*value*/, true) };
+					Value *i32ptr = Builder.CreateInBoundsGEP(array_ptr,indexList);
+
+					Result = "i32ptr has type ";
+					i32ptr->getType()->print(OS, false, false);
+					errs() << OS.str() << "\n";
+
+//					Value *i32ptr = Builder.CreateGEP(i32_ptr_type,array_ptr,"olumnue");
+//					Builder.CreateGEP()
+
+					if (i32ptr) {
+						errs() << "YES IT Is";
+					}
+					//Builder.CreateCall(me)
+
+					Value *args[] = { i32ptr, ConstantInt::get(i32_type,
+							offsetBytes/*value*/, true) };
+					Builder.CreateCall(memspm_intrinsic,args);
+
+//					CallInst *call_inst = CallInst::Create(memspm_intrinsic,
+//							args);
+//					BB->getInstList().push_back(call_inst);
+				}
+
+			}
+		}
+
+		//TODO gloval variables Annotations
+//		auto global_annos = M.getNamedGlobal("llvm.global.annotations");
+//		if (global_annos) {
+//			auto a = cast<ConstantArray>(global_annos->getOperand(0));
+//			for (unsigned int i = 0; i < a->getNumOperands(); i++) {
+//				auto e = cast<ConstantStruct>(a->getOperand(i));
+//				auto anno =
+//						cast<ConstantDataArray>(
+//								cast<GlobalVariable>(
+//										e->getOperand(1)->getOperand(0))->getOperand(
+//										0))->getAsCString();
+//				errs() << "anno = " << anno << "\n";
+//				Value *anno_operand = e->getOperand(0)->getOperand(0);
+//				if (auto fn = dyn_cast<Function>(
+//						e->getOperand(0)->getOperand(0))) {
+//					auto anno =
+//							cast<ConstantDataArray>(
+//									cast<GlobalVariable>(
+//											e->getOperand(1)->getOperand(0))->getOperand(
+//											0))->getAsCString();
+//					fn->addFnAttr(anno); // <-- add function annotation here
+//				}
+//			}
+//		}
+
+//
+//		for (Function &fn : M) {
+//			errs() << "I saw a function called " << fn.getName() << "!\n";
+//			if (fn.hasFnAttribute("ali")) {
+//				errs() << fn.getName() << " has my attribute!\n";
+//			}
+//		}
 
 //		std::stack<Instruction*> workList; //Instructions to be deleted
+//		std::stack<Instruction*> allocaStack;
+//
 //		for (Function &fn : M) {
 //			errs() << "I saw a function called " << fn.getName() << "!\n";
 //			for (BasicBlock &bb : fn) {
 //				errs() << fn.getName() << "'s basic block: " << bb.getName()
 //						<< "!\n";
 //				for (Instruction &inst : bb) {
-//					errs() << inst << "'\n";
+//					errs() << inst << "\n";
 ////					AllocaInst *casted_inst = dyn_cast<AllocaInst>(&inst);
 ////					if (casted_inst) {
 ////						errs() << "Casted instruction is Alloca" << "!\n";
@@ -265,48 +489,36 @@ struct SkeletonPass: public ModulePass {
 //				}
 //			}
 //		}
-
-		//Delete Instructions
-//		int count = 0;
-//		while (!workList.empty()) {
-//			count++;
-//			Instruction *I = workList.top();
-//			I->eraseFromParent();
-//			workList.pop();
-//			errs() << count << "\n";
-//			modified = true;
-//		}
+//
+//		//Delete Instructions
+////		int count = 0;
+////		while (!workList.empty()) {
+////			count++;
+////			Instruction *I = workList.top();
+////			I->eraseFromParent();
+////			workList.pop();
+////			errs() << count << "\n";
+////			modified = true;
+////		}
 //		errs() << "\nLet the transformation began........\n\n";
 //
 //		while (!workList.empty()) {
 //			Instruction *I = workList.top();
 //			IRBuilder<> builder(I->getNextNode());
-//			// Create an instruction representing (a + ~b) + 1
-//			Value *InterValue = builder.CreateAdd(I->getOperand(0),
-//					builder.CreateNot(I->getOperand(0)));
-//
 //			llvm::Type *i32_type = llvm::IntegerType::getInt32Ty(
 //					M.getContext());
+//
+//			// Create an instruction representing (a + ~b) + 1
+////			Value *InterValue = builder.CreateAdd(I->getOperand(0),
+////					builder.CreateNot(I->getOperand(0)));
+////
+////
 ////			llvm::Constant *i32_val = llvm::ConstantInt::get(i32_type,
 ////					1/*value*/, true);
 ////			Value *NewValue = builder.CreateAdd(InterValue, i32_val);
 //
-//			errs() << "The number of operands of the instruction is "
-//					<< I->getNumOperands() << "\n";
-//
-//			std::string Result;
-//			Result = "Instruction's type is ";
-//			raw_string_ostream OS(Result);
-//			I->getType()->print(OS, false, false);
-//			errs() << OS.str() << "\n";
-//
-//			Result = "getOperand(0) type is ";
-//			I->getOperand(0)->getType()->print(OS, false, false);
-//			errs() << OS.str() << "\n";
-//
-//			Result = "getOperand(1) type is ";
-//			I->getOperand(1)->getType()->print(OS, false, false);
-//			errs() << OS.str() << "\n";
+//			Value *spm_args[] = { I->getOperand(1), I->getOperand(0) };
+//			builder.CreateCall(memspm_intrinsic, spm_args);
 //
 ////			auto *A = builder.CreateAlloca(i32_type, nullptr, "a");
 ////			builder.CreateStore(NewValue, A, /*isVolatile=*/false);
@@ -329,6 +541,12 @@ struct SkeletonPass: public ModulePass {
 //		}
 
 		return modified;
+	}
+
+	virtual void getAnalysisUsage(AnalysisUsage &AU) const {
+		//AU.setPreservesCFG();
+		AU.addRequired<LoopInfoWrapperPass>();
+		AU.addRequired<ScalarEvolutionWrapperPass>();
 	}
 }
 ;
