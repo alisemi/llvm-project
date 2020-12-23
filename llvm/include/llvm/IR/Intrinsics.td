@@ -1536,6 +1536,7 @@ def int_vscale : Intrinsic<[llvm_anyint_ty], [], [IntrNoMem]>;
 def int_memspm : Intrinsic<[], [llvm_anyptr_ty, llvm_i32_ty], []>;
 def int_spmreg : Intrinsic<[llvm_i32_ty], [llvm_anyptr_ty, llvm_i32_ty], []>;
 def int_spmdel : Intrinsic<[], [llvm_anyptr_ty, llvm_i32_ty], []>;
+def int_spmcon : Intrinsic<[], [llvm_anyptr_ty, llvm_i32_ty], []>;
 
 
 //===----------------------------------------------------------------------===//
