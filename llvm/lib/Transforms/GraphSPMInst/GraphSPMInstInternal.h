@@ -26,31 +26,16 @@ class DominatorTree;
 class LoopInfo;
 class SCEV;
 
-static const StringRef SPM_ANNO = StringRef("ali", 4); //For some reasons, annotated string value has length 4
-static const StringRef SPM_ANNO3 = StringRef("ali", 3); //For some reasons, annotated string value has length 4
-
 static const StringRef ANNO_RISCV_EDGES = StringRef("riscv_edges", 12); //For some reasons, annotated string value has length plus one of strings
-static const StringRef ANNO_RISCV_EDGES_ = StringRef("riscv_edges", 11); //For some reasons, annotated string value has length 4
 
 static const StringRef ANNO_RISCV_OFFSETS = StringRef("riscv_offsets", 14); //For some reasons, annotated string value has length plus one of strings
-static const StringRef ANNO_RISCV_OFFSETS_ = StringRef("riscv_offsets", 13); //For some reasons, annotated string value has length 4
 
 static const StringRef ANNO_RISCV_VERSPDATA = StringRef("riscv_versp-data", 17); //For some reasons, annotated string value has length plus one of strings
-static const StringRef ANNO_RISCV_VERSPDATA_ = StringRef("riscv_versp-data", 16); //For some reasons, annotated string value has length 4
-
-static const StringRef ANNO_RISCV_VERSPDATA_SIZE = StringRef("riscv_versp_data_size",22);
-static const StringRef ANNO_RISCV_OFFSETS_SIZE = StringRef("riscv_offsets_size",19);
 
 static const StringRef ANNO_RISCV_MEMSPM = StringRef("riscv_memspm", 13);
 static const StringRef ANNO_RISCV_DELSPM = StringRef("riscv_spmdel", 13);
 
 static const int SPM_REG_SPECIAL_VALUE = 0xF0F0F0F0;
-
-struct SpmInfo {
-	std::stack<Instruction*> loadStack; //Loads to be replaced with spmreg
-	BasicBlock *memspmLocation; //Basic Blocks to insert memspm instructions
-	std::set<Value*> neededArrays;
-};
 
 class SPMDELInfo {
 

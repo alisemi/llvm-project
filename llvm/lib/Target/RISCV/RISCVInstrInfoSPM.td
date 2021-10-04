@@ -35,12 +35,14 @@ class SPM_ri<bits<3> funct3, string opcodestr>
 
 let Predicates = [HasExtSPM] in {
 def SPMCON  : SPM_rr<0b0000000, 0b011, "spmcon">,
-              Sched<[WriteSTW, ReadStoreData, ReadMemBase]>;
+//              Sched<[WriteSTW, ReadStoreData, ReadMemBase]>;
+              Sched<[]>;
 //def MEMSPM  : SPM_rr<0b0000000, 0b100, "memspm">,
 //              Sched<[WriteSTW, ReadStoreData, ReadMemBase]>;
 let hasSideEffects = 1, mayLoad = 1, mayStore = 1 in
 def MEMSPM  : ALU_rr<0b1000000, 0b000, "memspm">, 
-                Sched<[WriteSTW, ReadStoreData, ReadMemBase,WriteIALU, ReadIALU, ReadIALU]>;
+//              Sched<[WriteSTW, ReadStoreData, ReadMemBase,WriteIALU, ReadIALU, ReadIALU]>;
+              Sched<[]>;
 def SPMREG  : SPM_ri<0b000,"spmreg">,
               Sched<[]>; //Schudule Information??
 def SPMDEL  : SPM_rr<0b0000000, 0b010, "spmdel">,
