@@ -46,6 +46,9 @@ def MEMSPM  : ALU_rr<0b1000000, 0b000, "memspm">,
 def SPMREG  : SPM_ri<0b000,"spmreg">,
               //Sched<[]>; //Schudule Information??
               Sched<[WriteLDW, ReadMemBase]>;
+ def SPMREGW : SPM_ri<0b001,"spmregw">,
+			  //Sched<[]>; //Schudule Information??
+			  Sched<[WriteLDW, ReadMemBase]>;
 def SPMDEL  : SPM_rr<0b0000000, 0b010, "spmdel">,
               Sched<[WriteIALU, ReadIALU, ReadIALU]>;
 } // Predicates = [HasExtSPM]
@@ -59,9 +62,15 @@ def SPMDEL  : SPM_rr<0b0000000, 0b010, "spmdel">,
 def : Pat<(int_spmcon GPR:$addr, GPR:$rs2), (SPMCON GPR:$addr, GPR:$rs2)>;
 def : Pat<(int_memspm GPR:$addr, GPR:$rs2), (MEMSPM GPR:$addr, GPR:$rs2)>;
 def : Pat<(int_spmreg GPR:$addr, simm12:$imm12), (SPMREG GPR:$addr, simm12:$imm12)>;
+def : Pat<(int_spmregw GPR:$addr, simm12:$imm12), (SPMREGW GPR:$addr, simm12:$imm12)>;
 def : Pat<(int_spmdel GPR:$addr, GPR:$rs2), (SPMDEL GPR:$addr, GPR:$rs2)>;
 
 def : InstAlias<"spmreg $rd, 0(${rs1})",
                 (SPMREG  GPR:$rd, GPR:$rs1, 0)>;
 def : InstAlias<"spmreg $rd, $rs1, $imm12",
                 (SPMREG  GPR:$rd, GPR:$rs1, simm12:$imm12)>;
+                
+def : InstAlias<"spmregw $rd, 0(${rs1})",
+                (SPMREGW  GPR:$rd, GPR:$rs1, 0)>;
+def : InstAlias<"spmregw $rd, $rs1, $imm12",
+                (SPMREGW  GPR:$rd, GPR:$rs1, simm12:$imm12)>;
