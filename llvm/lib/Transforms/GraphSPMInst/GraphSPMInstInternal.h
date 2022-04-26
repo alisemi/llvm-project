@@ -27,6 +27,7 @@ class LoopInfo;
 class SCEV;
 
 static const StringRef ANNO_RISCV_EDGES = StringRef("riscv_edges", 12); //For some reasons, annotated string value has length plus one of strings
+static const StringRef ANNO_RISCV_WEIGHTS = StringRef("riscv_weights", 14); //For some reasons, annotated string value has length plus one of strings
 
 static const StringRef ANNO_RISCV_OFFSETS = StringRef("riscv_offsets", 14); //For some reasons, annotated string value has length plus one of strings
 
