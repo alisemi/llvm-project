@@ -39,14 +39,15 @@ struct GraphSPMInstPass: public ModulePass {
 //===----------------------------------------------------------------------===//
 //Static Function Declarations
 //
-static void findEdgeArray(std::map<StringRef, AllocaInst*> &spmcon_locations, Value *&edgeArray);
 
-static void findVertexArray(std::map<StringRef, AllocaInst*> &spmcon_locations, Value *&vertexArray);
+static void findAnnotatedArray(std::multimap<StringRef, AllocaInst*> &spmcon_locations,
+		SmallVector<Value*, 4> &edgeArrays, StringRef annotation);
 
-static bool insertSPMCON(std::map<StringRef, AllocaInst*> &spmcon_locations, Module &M, Function *spmcon_intrinsic);
+static bool insertSPMCON(std::multimap<StringRef, AllocaInst*> &spmcon_locations, Module &M,
+		Function *spmcon_intrinsic);
 
-static bool insertSPMDEL(std::map<StringRef, AllocaInst*> &spmcon_locations, LLVMContext &llvmContext, Value *edgeArray,
-		Function *delspm_intrinsic);
+static bool insertSPMDEL(std::multimap<StringRef, AllocaInst*> &spmcon_locations, LLVMContext &llvmContext,
+		Value *edgeArray, Function *spmdel_intrinsic);
 
 static void findAnnotatedVariables(Module &M, std::map<Value*, StringRef> &annotated_vars_map,
 		SmallVector<Instruction*, 4> &annotationCalls);
@@ -62,7 +63,7 @@ static void outermostLoopForSpm(Loop *L, ScalarEvolution *SE, LoopInfo *LI, Domi
 static bool insertSPMREG(LoadInst *I, Loop *L, LLVMContext &llvmContext, LoopInfo &LI, DominatorTree &DT,
 		Function *spmreg_intrinsic);
 
-static bool insertMEMSPM(std::map<StringRef, AllocaInst*> &spmcon_locations, LLVMContext &llvmContext,
+static bool insertMEMSPM(std::multimap<StringRef, AllocaInst*> &spmcon_locations, LLVMContext &llvmContext,
 		Value *vertexArray, Function *memspm_intrinsic);
 
 static Value* insertGEP(AllocaInst *inst, Value *IndexValue, Instruction *insertionPoint, LLVMContext &llvmContext);
@@ -71,23 +72,22 @@ static Value* insertGEP(AllocaInst *inst, Value *IndexValue, Instruction *insert
 //Static Function Implementations
 //
 
-static void findEdgeArray(std::map<StringRef, AllocaInst*> &spmcon_locations, Value *&edgeArray) {
-	std::map<StringRef, AllocaInst*>::iterator it;
-	it = spmcon_locations.find(ANNO_RISCV_EDGES);
-	if (it != spmcon_locations.end()) {
-		edgeArray = (Value*) it->second;
+
+static void findAnnotatedArray(std::multimap<StringRef, AllocaInst*> &spmcon_locations,
+		SmallVector<Value*, 4> &edgeArrays, StringRef annotation) {
+	//std::map<StringRef, AllocaInst*>::iterator it;
+//	it = spmcon_locations.find(annotation);
+//	if (it != spmcon_locations.end()) {
+//		edgeArrays.push_back((Value*) it->second);
+//	}
+	std::pair <std::multimap<StringRef, AllocaInst*>::iterator, std::multimap<StringRef, AllocaInst*>::iterator> ret;
+	ret = spmcon_locations.equal_range(annotation);
+	for (std::multimap<StringRef, AllocaInst*>::iterator it=ret.first; it!=ret.second; ++it){
+		edgeArrays.push_back((Value*) it->second);
 	}
 }
 
-static void findVertexArray(std::map<StringRef, AllocaInst*> &spmcon_locations, Value *&vertexArray) {
-	std::map<StringRef, AllocaInst*>::iterator it;
-	it = spmcon_locations.find(ANNO_RISCV_OFFSETS);
-	if (it != spmcon_locations.end()) {
-		vertexArray = (Value*) it->second;
-	}
-}
-
-static bool insertMEMSPM(std::map<StringRef, AllocaInst*> &spmcon_locations, LLVMContext &llvmContext,
+static bool insertMEMSPM(std::multimap<StringRef, AllocaInst*> &spmcon_locations, LLVMContext &llvmContext,
 		Value *vertexArray, Function *memspm_intrinsic) {
 	bool modified = false;
 	llvm::Type *i32_type = llvm::IntegerType::getInt32Ty(llvmContext);
@@ -132,7 +132,8 @@ static Value* insertGEP(AllocaInst *inst, Value *IndexValue, Instruction *insert
 	return nullptr;
 }
 
-static bool insertSPMCON(std::map<StringRef, AllocaInst*> &spmcon_locations, Module &M, Function *spmcon_intrinsic) {
+static bool insertSPMCON(std::multimap<StringRef, AllocaInst*> &spmcon_locations, Module &M,
+		Function *spmcon_intrinsic) {
 	bool modified = false;
 	llvm::Type *i32_type = llvm::IntegerType::getInt32Ty(M.getContext());
 	std::map<StringRef, AllocaInst*>::iterator it;
@@ -192,8 +193,8 @@ static bool insertSPMCON(std::map<StringRef, AllocaInst*> &spmcon_locations, Mod
 }
 
 //Basic spmdel insertion by user-specified index value
-static bool insertSPMDEL(std::map<StringRef, AllocaInst*> &spmcon_locations, LLVMContext &llvmContext, Value *edgeArray,
-		Function *spmdel_intrinsic) {
+static bool insertSPMDEL(std::multimap<StringRef, AllocaInst*> &spmcon_locations, LLVMContext &llvmContext,
+		Value *edgeArray, Function *spmdel_intrinsic) {
 	bool modified = false;
 	llvm::Type *i32_type = llvm::IntegerType::getInt32Ty(llvmContext);
 	std::map<StringRef, AllocaInst*>::iterator it;
@@ -506,10 +507,10 @@ bool GraphSPMInstPass::runOnModule(Module &M) {
 //Get calls to annotations
 	std::map<Value*, StringRef> annotatedVarsMap;
 
-	std::map<StringRef, std::map<StringRef, AllocaInst*> > annotatedAllocaInstMap;
-	std::map<StringRef, AllocaInst*> spmconLocations;
-	Value *edgeArray = nullptr;
-	Value *vertexArray = nullptr;
+	std::map<StringRef, std::multimap<StringRef, AllocaInst*> > annotatedAllocaInstMap;
+	std::multimap<StringRef, AllocaInst*> spmconLocations;
+	SmallVector<Value*, 4> edgeArrays;
+	SmallVector<Value*, 4> vertexArrays;
 	SmallVector<Instruction*, 4> annotationCalls;
 
 //Pre_annotated_vars
@@ -525,7 +526,7 @@ bool GraphSPMInstPass::runOnModule(Module &M) {
 	DEBUG_WITH_TYPE("annotation", dbgs() << "SPMCON Locations...\n");
 
 	for (Function &fn : M) {
-		std::map<StringRef, AllocaInst*> allocaInstLocations;
+		std::multimap<StringRef, AllocaInst*> allocaInstLocations;
 		for (BasicBlock &bb : fn) {
 			for (Instruction &inst : bb) {
 				if (AllocaInst *allocaInst = dyn_cast<AllocaInst>(&inst)) {
@@ -535,7 +536,7 @@ bool GraphSPMInstPass::runOnModule(Module &M) {
 					if (it != annotatedVarsMap.end()) {
 						DEBUG_WITH_TYPE("annotation",
 								dbgs() << "SPMCON: Found at " << it->first->getName() << " - " << it->second << "\n");
-						allocaInstLocations[it->second] = allocaInst;
+						allocaInstLocations.insert(std::pair<StringRef, AllocaInst*>(it->second, allocaInst));
 					}
 				}
 			}
@@ -543,51 +544,61 @@ bool GraphSPMInstPass::runOnModule(Module &M) {
 		annotatedAllocaInstMap[fn.getName()] = allocaInstLocations;
 	}
 
-	spmconLocations = annotatedAllocaInstMap["main"];
+	std::map<StringRef, std::multimap<StringRef, AllocaInst*> >::iterator it;
+	it = annotatedAllocaInstMap.find("main");
+	if (it != annotatedAllocaInstMap.end()) {
+		spmconLocations = it->second;
+	}
 
 //Insert SPMCon instructions
-	findEdgeArray(spmconLocations, edgeArray);
-	findVertexArray(spmconLocations, vertexArray);
+	findAnnotatedArray(spmconLocations, edgeArrays, ANNO_RISCV_EDGES);
+	findAnnotatedArray(spmconLocations, vertexArrays, ANNO_RISCV_OFFSETS);
 
-	assert(edgeArray && "No edge array found!");
-	assert(vertexArray && "No vertex array found!");
+	assert(edgeArrays.size() > 0 && "No edge array found!");
+	assert(vertexArrays.size() > 0 && "No vertex array found!");
 
 	modified |= insertSPMCON(spmconLocations, M, spmcon_intrinsic);
 
 	DEBUG_WITH_TYPE("annotation", dbgs() << "Edge Array Users:\n");
-	Instruction *allocaInst = cast<Instruction>(edgeArray);
-	for (auto iter = allocaInst->user_begin(); iter != allocaInst->user_end(); ++iter) {
-		DEBUG_WITH_TYPE("annotation", dbgs() << *(*iter) << "\n");
+	for(auto edgeArray : edgeArrays){
+		Instruction *allocaInst = cast<Instruction>((Value*) edgeArray);
+		DEBUG_WITH_TYPE("annotation", dbgs() << "Users for the allocation of :" << *allocaInst << "\n");
+		for (auto iter = allocaInst->user_begin(); iter != allocaInst->user_end(); ++iter) {
+			DEBUG_WITH_TYPE("annotation", dbgs() << *(*iter) << "\n");
+		}
+		DEBUG_WITH_TYPE("annotation", dbgs() << "\n");
 	}
+
 
 	for (Function &fn : M) {
 		if (fn.isDeclaration()) {
 			continue;
 		}
 
-		edgeArray = nullptr;
-		vertexArray = nullptr;
+		edgeArrays.clear();
+		vertexArrays.clear();
 
-		findEdgeArray(annotatedAllocaInstMap[fn.getName()], edgeArray);
-		findVertexArray(annotatedAllocaInstMap[fn.getName()], vertexArray);
+		findAnnotatedArray(annotatedAllocaInstMap[fn.getName()], edgeArrays, ANNO_RISCV_EDGES);
+		findAnnotatedArray(annotatedAllocaInstMap[fn.getName()], vertexArrays, ANNO_RISCV_OFFSETS);
 
 		std::map<Instruction*, Loop*> loadLoopMap;
 		ScalarEvolution &SE = getAnalysis<ScalarEvolutionWrapperPass>(fn).getSE();
 		LoopInfo &LI = getAnalysis<LoopInfoWrapperPass>(fn).getLoopInfo();
 		DominatorTree &DT = getAnalysis<DominatorTreeWrapperPass>(fn).getDomTree();
 
-		if(edgeArray){
-			findSpmregLocations(edgeArray, loadLoopMap, &fn, &SE, &LI, &DT);
+		if (edgeArrays.size() > 0) {
+			findSpmregLocations((Value*) edgeArrays[0], loadLoopMap, &fn, &SE, &LI, &DT);
 		}
 
-		if (edgeArray) {
+		if (edgeArrays.size() > 0) {
 			DEBUG_WITH_TYPE("loops", dbgs() << "\n SPMDEL Insertion....\n");
 			//SPMDEL insertion
 			//		for (auto it : spmdelInfos) {
 			//		modified |= insertSPMDEL(*it, M.getContext(), edgeArrayInst,
 			//				spmdel_intrinsic);
 			//		}
-			modified |= insertSPMDEL(annotatedAllocaInstMap[fn.getName()], M.getContext(), edgeArray, spmdel_intrinsic);
+			modified |= insertSPMDEL(annotatedAllocaInstMap[fn.getName()], M.getContext(), (Value*) edgeArrays[0],
+					spmdel_intrinsic);
 		}
 
 		//SPMREG insertion
@@ -603,9 +614,9 @@ bool GraphSPMInstPass::runOnModule(Module &M) {
 		}
 
 		//MEMSPM insertion
-		if (vertexArray) {
+		if (vertexArrays.size() > 0) {
 			DEBUG_WITH_TYPE("annotation", dbgs() << "\n MEMSPM Insertion....\n");
-			modified |= insertMEMSPM(annotatedAllocaInstMap[fn.getName()], M.getContext(), vertexArray,
+			modified |= insertMEMSPM(annotatedAllocaInstMap[fn.getName()], M.getContext(), (Value*) vertexArrays[0],
 					memspm_intrinsic);
 		}
 
