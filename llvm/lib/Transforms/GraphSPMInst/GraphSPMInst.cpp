@@ -72,7 +72,6 @@ static Value* insertGEP(AllocaInst *inst, Value *IndexValue, Instruction *insert
 //Static Function Implementations
 //
 
-
 static void findAnnotatedArray(std::multimap<StringRef, AllocaInst*> &spmcon_locations,
 		SmallVector<Value*, 4> &edgeArrays, StringRef annotation) {
 	//std::map<StringRef, AllocaInst*>::iterator it;
@@ -80,9 +79,9 @@ static void findAnnotatedArray(std::multimap<StringRef, AllocaInst*> &spmcon_loc
 //	if (it != spmcon_locations.end()) {
 //		edgeArrays.push_back((Value*) it->second);
 //	}
-	std::pair <std::multimap<StringRef, AllocaInst*>::iterator, std::multimap<StringRef, AllocaInst*>::iterator> ret;
+	std::pair<std::multimap<StringRef, AllocaInst*>::iterator, std::multimap<StringRef, AllocaInst*>::iterator> ret;
 	ret = spmcon_locations.equal_range(annotation);
-	for (std::multimap<StringRef, AllocaInst*>::iterator it=ret.first; it!=ret.second; ++it){
+	for (std::multimap<StringRef, AllocaInst*>::iterator it = ret.first; it != ret.second; ++it) {
 		edgeArrays.push_back((Value*) it->second);
 	}
 }
@@ -292,79 +291,81 @@ static void findAnnotatedVariables(Module &M, std::map<Value*, StringRef> &annot
 	}
 }
 
-static void findSpmregLocations(Value *edgeArray, std::map<Instruction*, Loop*> &loadLoopMap, Function *fn,
-		ScalarEvolution *SE, LoopInfo *LI, DominatorTree *DT) {
-	//TODO there should be no store for edge array, check for that
-	Instruction *edgeArrayInst = cast<Instruction>(edgeArray);
+static void findSpmregLocations(SmallVector<Value*, 4> &edgeArrays, std::map<Instruction*, Loop*> &loadLoopMap,
+		Function *fn, ScalarEvolution *SE, LoopInfo *LI, DominatorTree *DT) {
+	for (auto edgeArray : edgeArrays) {
+		//TODO there should be no store for edge array, check for that
+		Instruction *edgeArrayInst = cast<Instruction>(edgeArray);
+		//Loops, finding the spmregLocations
+		std::vector<Instruction*> spmRegLocations;
+		std::map<Loop*, int> loopLevels;
+		SmallSet<SPMDELInfo*, 4> spmdelInfos;
 
-	//Loops, finding the spmregLocations
-	std::vector<Instruction*> spmRegLocations;
-	std::map<Loop*, int> loopLevels;
-	SmallSet<SPMDELInfo*, 4> spmdelInfos;
+		//Pre-process loops to get their level information, iterate only on top-level loops
+		for (LoopInfo::iterator LIT = LI->begin(); LIT != LI->end(); ++LIT) {
+			Loop *ll = *LIT;
+			outermostLoopForSpm(ll, SE, LI, DT, edgeArrayInst, spmRegLocations, loadLoopMap, spmdelInfos);
+		}
 
-	//Pre-process loops to get their level information, iterate only on top-level loops
-	for (LoopInfo::iterator LIT = LI->begin(); LIT != LI->end(); ++LIT) {
-		Loop *ll = *LIT;
-		outermostLoopForSpm(ll, SE, LI, DT, edgeArrayInst, spmRegLocations, loadLoopMap, spmdelInfos);
-	}
-
-	//Find spmreg locations that are not related to a loop
-	for (BasicBlock &bb : fn->getBasicBlockList()) {
-		for (Instruction &inst : bb) {
-			if (LoadInst *load_inst = dyn_cast<LoadInst>(&inst)) {
-				Value *addr = load_inst->getPointerOperand();
-				bool annotated = false;
-				for (auto iter = edgeArray->user_begin(); iter != edgeArray->user_end(); ++iter) {
-					if ((*iter) == addr) {
-						annotated = true;
-						break;
-					}
-					//Or look at users of user, for pointer to pointer case
-					for (auto iter2 = (*iter)->user_begin(); iter2 != (*iter)->user_end(); ++iter2) {
-						if ((*iter2) == addr) {
+		//Find spmreg locations that are not related to a loop
+		for (BasicBlock &bb : fn->getBasicBlockList()) {
+			for (Instruction &inst : bb) {
+				if (LoadInst *load_inst = dyn_cast<LoadInst>(&inst)) {
+					Value *addr = load_inst->getPointerOperand();
+					bool annotated = false;
+					for (auto iter = edgeArray->user_begin(); iter != edgeArray->user_end(); ++iter) {
+						if ((*iter) == addr) {
 							annotated = true;
 							break;
 						}
+						//Or look at users of user, for pointer to pointer case
+						for (auto iter2 = (*iter)->user_begin(); iter2 != (*iter)->user_end(); ++iter2) {
+							if ((*iter2) == addr) {
+								annotated = true;
+								break;
+							}
+						}
 					}
-				}
-				if (annotated) {
-					//If it is not related to a loop
-					if (loadLoopMap.find(load_inst) == loadLoopMap.end()) {
-						loadLoopMap[load_inst] = nullptr;
-						spmRegLocations.push_back(load_inst);
+					if (annotated) {
+						//If it is not related to a loop
+						if (loadLoopMap.find(load_inst) == loadLoopMap.end()) {
+							loadLoopMap[load_inst] = nullptr;
+							spmRegLocations.push_back(load_inst);
+						}
 					}
 				}
 			}
+
 		}
 
+		DEBUG_WITH_TYPE("loops", dbgs() << "SPMREG Locations: \n");
+		for (auto &it : spmRegLocations) {
+			Instruction *inst = it;
+			DEBUG_WITH_TYPE("loops", dbgs() << *it << "\n");
+			DEBUG_WITH_TYPE("loops", dbgs() << "What is this instruction using?\n");
+			for (auto iter = inst->op_begin(); iter != inst->op_end(); ++iter) {
+				DEBUG_WITH_TYPE("loops", dbgs() << (*iter)->getName() << "\n");
+			}
+			DEBUG_WITH_TYPE("loops", dbgs() << "What is using this instruction?\n");
+			for (auto iter = inst->user_begin(); iter != inst->user_end(); ++iter) {
+				DEBUG_WITH_TYPE("loops", dbgs() << (*iter)->getName() << "\n");
+			}
+		}
+		DEBUG_WITH_TYPE("loops", dbgs() << "SPMREG Locations(LoadMap: \n");
+		for (auto const &it : loadLoopMap) {
+			DEBUG_WITH_TYPE("loops", dbgs() << *it.first << " <-> " << *it.second);
+		}
+
+		DEBUG_WITH_TYPE("loops", dbgs() << "SPMDEL Information: \n");
+		for (auto it : spmdelInfos) {
+			DEBUG_WITH_TYPE("loops", dbgs() << "Parent loop: " << it->outerMostLoop.getName() << "\n");
+			DEBUG_WITH_TYPE("loops", dbgs() << "Inner loops: \n");
+			for (auto innerLoop : it->innerLoops) {
+				DEBUG_WITH_TYPE("loops", dbgs() << innerLoop->getName() << "\n");
+			}
+		}
 	}
 
-	DEBUG_WITH_TYPE("loops", dbgs() << "SPMREG Locations: \n");
-	for (auto &it : spmRegLocations) {
-		Instruction *inst = it;
-		DEBUG_WITH_TYPE("loops", dbgs() << *it << "\n");
-		DEBUG_WITH_TYPE("loops", dbgs() << "What is this instruction using?\n");
-		for (auto iter = inst->op_begin(); iter != inst->op_end(); ++iter) {
-			DEBUG_WITH_TYPE("loops", dbgs() << (*iter)->getName() << "\n");
-		}
-		DEBUG_WITH_TYPE("loops", dbgs() << "What is using this instruction?\n");
-		for (auto iter = inst->user_begin(); iter != inst->user_end(); ++iter) {
-			DEBUG_WITH_TYPE("loops", dbgs() << (*iter)->getName() << "\n");
-		}
-	}
-	DEBUG_WITH_TYPE("loops", dbgs() << "SPMREG Locations(LoadMap: \n");
-	for (auto const &it : loadLoopMap) {
-		DEBUG_WITH_TYPE("loops", dbgs() << *it.first << " <-> " << *it.second);
-	}
-
-	DEBUG_WITH_TYPE("loops", dbgs() << "SPMDEL Information: \n");
-	for (auto it : spmdelInfos) {
-		DEBUG_WITH_TYPE("loops", dbgs() << "Parent loop: " << it->outerMostLoop.getName() << "\n");
-		DEBUG_WITH_TYPE("loops", dbgs() << "Inner loops: \n");
-		for (auto innerLoop : it->innerLoops) {
-			DEBUG_WITH_TYPE("loops", dbgs() << innerLoop->getName() << "\n");
-		}
-	}
 }
 
 static void functionAnnotattions(Module &M) {
@@ -510,6 +511,7 @@ bool GraphSPMInstPass::runOnModule(Module &M) {
 	std::map<StringRef, std::multimap<StringRef, AllocaInst*> > annotatedAllocaInstMap;
 	std::multimap<StringRef, AllocaInst*> spmconLocations;
 	SmallVector<Value*, 4> edgeArrays;
+	SmallVector<Value*, 4> weightArrays;
 	SmallVector<Value*, 4> vertexArrays;
 	SmallVector<Instruction*, 4> annotationCalls;
 
@@ -552,6 +554,7 @@ bool GraphSPMInstPass::runOnModule(Module &M) {
 
 //Insert SPMCon instructions
 	findAnnotatedArray(spmconLocations, edgeArrays, ANNO_RISCV_EDGES);
+	findAnnotatedArray(spmconLocations, weightArrays, ANNO_RISCV_WEIGHTS);
 	findAnnotatedArray(spmconLocations, vertexArrays, ANNO_RISCV_OFFSETS);
 
 	assert(edgeArrays.size() > 0 && "No edge array found!");
@@ -560,7 +563,7 @@ bool GraphSPMInstPass::runOnModule(Module &M) {
 	modified |= insertSPMCON(spmconLocations, M, spmcon_intrinsic);
 
 	DEBUG_WITH_TYPE("annotation", dbgs() << "Edge Array Users:\n");
-	for(auto edgeArray : edgeArrays){
+	for (auto edgeArray : edgeArrays) {
 		Instruction *allocaInst = cast<Instruction>((Value*) edgeArray);
 		DEBUG_WITH_TYPE("annotation", dbgs() << "Users for the allocation of :" << *allocaInst << "\n");
 		for (auto iter = allocaInst->user_begin(); iter != allocaInst->user_end(); ++iter) {
@@ -569,7 +572,6 @@ bool GraphSPMInstPass::runOnModule(Module &M) {
 		DEBUG_WITH_TYPE("annotation", dbgs() << "\n");
 	}
 
-
 	for (Function &fn : M) {
 		if (fn.isDeclaration()) {
 			continue;
@@ -577,18 +579,21 @@ bool GraphSPMInstPass::runOnModule(Module &M) {
 
 		edgeArrays.clear();
 		vertexArrays.clear();
+		weightArrays.clear();
 
 		findAnnotatedArray(annotatedAllocaInstMap[fn.getName()], edgeArrays, ANNO_RISCV_EDGES);
+		findAnnotatedArray(annotatedAllocaInstMap[fn.getName()], weightArrays, ANNO_RISCV_WEIGHTS);
 		findAnnotatedArray(annotatedAllocaInstMap[fn.getName()], vertexArrays, ANNO_RISCV_OFFSETS);
 
 		std::map<Instruction*, Loop*> loadLoopMap;
+		std::map<Instruction*, Loop*> loadLoopMapSpmRegW;
 		ScalarEvolution &SE = getAnalysis<ScalarEvolutionWrapperPass>(fn).getSE();
 		LoopInfo &LI = getAnalysis<LoopInfoWrapperPass>(fn).getLoopInfo();
 		DominatorTree &DT = getAnalysis<DominatorTreeWrapperPass>(fn).getDomTree();
 
-		if (edgeArrays.size() > 0) {
-			findSpmregLocations((Value*) edgeArrays[0], loadLoopMap, &fn, &SE, &LI, &DT);
-		}
+		findSpmregLocations(edgeArrays, loadLoopMap, &fn, &SE, &LI, &DT);
+		//TODO separate map for weights, for spmregw
+		findSpmregLocations(weightArrays, loadLoopMapSpmRegW, &fn, &SE, &LI, &DT);
 
 		if (edgeArrays.size() > 0) {
 			DEBUG_WITH_TYPE("loops", dbgs() << "\n SPMDEL Insertion....\n");
@@ -609,6 +614,18 @@ bool GraphSPMInstPass::runOnModule(Module &M) {
 			LoopInfo &LI = getAnalysis<LoopInfoWrapperPass>(*(inst->getParent()->getParent())).getLoopInfo();
 			DominatorTree &DT = getAnalysis<DominatorTreeWrapperPass>(*(inst->getParent()->getParent())).getDomTree();
 			LoadInst *I = cast<LoadInst>(inst);
+			modified |= insertSPMREG(I, L, M.getContext(), LI, DT, spmreg_intrinsic);
+			LI.verify(DT);
+		}
+		//TODO SPMREGW insertion
+		DEBUG_WITH_TYPE("loops", dbgs() << "\n SPMREG Insertion....\n");
+		for (auto const &it : loadLoopMapSpmRegW) {
+			Instruction *inst = it.first;
+			Loop *L = it.second;
+			LoopInfo &LI = getAnalysis<LoopInfoWrapperPass>(*(inst->getParent()->getParent())).getLoopInfo();
+			DominatorTree &DT = getAnalysis<DominatorTreeWrapperPass>(*(inst->getParent()->getParent())).getDomTree();
+			LoadInst *I = cast<LoadInst>(inst);
+			//TODO change it into spmregw_intrinsic
 			modified |= insertSPMREG(I, L, M.getContext(), LI, DT, spmreg_intrinsic);
 			LI.verify(DT);
 		}
